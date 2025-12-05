@@ -131,141 +131,125 @@ def load_and_process_data():
         st.error(f"讀取資料錯誤: {e}")
         return pd.DataFrame(), []
 
-# --- 爬蟲更新函數 (終極強健版) ---
+# --- 爬蟲更新函數 (強制無表頭版) ---
 def update_data_from_web():
     url = "https://www.pilio.idv.tw/lto539/list539APP.asp"
+    import re # 需要用到 regex
+    
     try:
-        # 1. 偽裝瀏覽器抓取網頁
+        # 1. 抓取網頁
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         response = requests.get(url, headers=headers)
-        response.encoding = 'big5' # 該網站是 Big5 編碼
+        response.encoding = 'big5' # 設定編碼
         
-        # 2. 解析所有表格
-        # 使用 match 參數直接尋找包含 "中獎號碼" 或日期格式的表格
-        # 但為了保險，我們抓取所有表格再人工篩選
-        dfs = pd.read_html(response.text)
+        # 2. 解析表格 (關鍵修正：header=None)
+        # 告訴 pandas 不要把第一列當標題，直接當作資料讀進來
+        dfs = pd.read_html(response.text, header=None)
         
         target_df = None
         
-        # 3. 智慧篩選正確表格
+        # 3. 尋找目標表格
         for df in dfs:
-            # 條件A: 至少要有 2 欄 (日期, 號碼)
-            if df.shape[1] < 2:
-                continue
-            
-            # 條件B: 檢查第一列或第二列的內容特徵
-            # 我們將表格轉為字串來檢查，看是否包含 "/" (日期) 和 "," (號碼分隔)
-            # 取前 5 列來檢查
-            sample_txt = df.head(5).to_string()
-            
-            # 特徵：日期通常有 202x/xx/xx，號碼有 xx, xx
-            if "/" in sample_txt and "," in sample_txt:
-                # 再次確認：第一欄應該要像日期
-                try:
-                    # 嘗試抓第一列第一欄，看能不能轉成字串並包含 "/"
-                    val = str(df.iloc[0, 0])
-                    if "/" in val:
-                        target_df = df
-                        # 鎖定前兩欄，因為網頁可能有隱藏的第3,4欄
-                        target_df = target_df.iloc[:, :2]
-                        target_df.columns = ['日期字串', '號碼字串']
-                        break
-                except:
-                    continue
-
+            # 條件：只有 2 欄
+            if df.shape[1] == 2:
+                # 檢查內容特徵：第一欄應該要有 "/" (日期)，第二欄要有 "," (號碼)
+                # 我們把前幾列轉成字串檢查一下
+                sample = df.head(3).to_string()
+                if "/" in sample and "," in sample:
+                    target_df = df
+                    target_df.columns = ['日期字串', '號碼字串']
+                    break
+        
         if target_df is None:
-            return f"❌ 找不到符合格式的表格 (偵測到 {len(dfs)} 個表格，但內容特徵不符)"
+            return "❌ 找不到符合格式的表格 (請檢查網站是否改版)"
 
-        # 4. 讀取現有 CSV 以獲取最後一筆資料
+        # 4. 讀取現有 CSV (取得最後一筆日期)
+        debug_msg = ""
         try:
             current_csv = pd.read_csv(CSV_FILE)
-            # 清理欄位空白
             current_csv.columns = [c.strip() for c in current_csv.columns]
+            
+            # 移除空行，確保抓到真正的最後一筆
+            current_csv = current_csv.dropna(subset=['年份', '日期'])
             
             if not current_csv.empty:
                 last_row = current_csv.iloc[-1]
                 
-                # 取得最後的總期數與期數，用於累加
-                # 如果 CSV 裡面是 NaN，就用 0 或列數取代
+                # 取得最後期數
                 try:
                     last_total_id = int(last_row['總期數'])
                 except:
                     last_total_id = len(current_csv)
-                    
                 try:
                     last_draw_id = int(last_row['期數'])
                 except:
                     last_draw_id = 0
                 
-                # 組合出最後一筆的完整日期物件，用於比對
-                # 您的 CSV 格式：年份=2025, 日期=1月1日
-                try:
-                    # 處理 "1月1日" 這種格式
-                    d_str = str(last_row['日期']).replace('月', '/').replace('日', '')
-                    last_date_str = f"{last_row['年份']}/{d_str}"
-                    last_record_date = pd.to_datetime(last_date_str)
-                except:
-                    # 如果解析失敗，用一個很舊的日期代替
-                    last_record_date = pd.to_datetime("2000/01/01")
+                # 解析 CSV 最後日期 (格式: 2025, 11月25日)
+                d_str = str(last_row['日期']).replace('月', '/').replace('日', '')
+                last_date_str = f"{last_row['年份']}/{d_str}"
+                last_record_date = pd.to_datetime(last_date_str)
+                
+                debug_msg += f"CSV 最後日期: {last_date_str} | "
             else:
                 last_total_id = 0
                 last_draw_id = 0
                 last_record_date = pd.to_datetime("2000/01/01")
+                debug_msg += "CSV 為空 | "
 
         except Exception as e:
             return f"❌ 讀取 CSV 失敗: {e}"
 
-        # 5. 處理網頁資料並篩選新資料
+        # 5. 處理網頁資料
         new_rows = []
         
-        # 網頁資料通常是最新的在上面，我們由上往下讀
         for index, row in target_df.iterrows():
             try:
-                date_raw = str(row['日期字串']) # 格式如 "2025/12/04 (四)"
-                nums_raw = str(row['號碼字串']) # 格式如 "01, 07, 20, 25, 37"
+                date_raw = str(row['日期字串']) 
+                nums_raw = str(row['號碼字串'])
                 
-                # --- 解析日期 ---
-                if "/" not in date_raw: continue # 不是日期行就跳過
+                # --- 使用 Regex 抓取日期 ---
+                # 抓取像是 2025/12/04 這樣的格式
+                date_match = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', date_raw)
                 
-                # 取出前面的日期部分
-                clean_date_part = date_raw.split(' ')[0].split('(')[0].strip()
-                current_date = pd.to_datetime(clean_date_part)
+                if not date_match:
+                    continue # 沒抓到日期就跳過
                 
-                # 如果這筆資料的日期 <= CSV 最後一筆日期，代表已經存在，跳過
+                # 建立日期物件
+                current_date = pd.to_datetime(date_match.group(0))
+                
+                # 比對：如果網頁日期 <= CSV日期，代表是舊資料 -> 跳過
                 if current_date <= last_record_date:
                     continue
                 
                 # --- 解析號碼 ---
-                # 移除全形逗號
                 nums_str = nums_raw.replace('，', ',')
                 nums = [int(n.strip()) for n in nums_str.split(',') if n.strip().isdigit()]
                 
                 if len(nums) != 5:
-                    continue 
+                    continue
                 
-                # 暫存這筆新資料
-                # 格式化日期為 "1月1日" 風格
+                # 格式化寫入用的日期 (12月4日)
                 formatted_date = f"{current_date.month}月{current_date.day}日"
                 
                 new_rows.append({
-                    'dt': current_date, # 用於排序
+                    'dt': current_date, # 排序用
                     'year': current_date.year,
                     'date_str': formatted_date,
                     'nums': nums
                 })
                 
             except Exception as e:
-                continue 
+                continue
         
         if not new_rows:
-            return "✅ 資料已是最新 (無需更新)"
+            return f"✅ 資料已是最新 (偵測基準：{last_record_date.strftime('%Y/%m/%d')})"
         
-        # 6. 將新資料依日期「由舊到新」排序
+        # 6. 寫入資料 (由舊到新排序)
         new_rows.sort(key=lambda x: x['dt'])
         
-        # 7. 寫入 CSV (補齊所有欄位)
         added_count = 0
         rows_to_add = []
         
@@ -273,7 +257,6 @@ def update_data_from_web():
             last_total_id += 1
             last_draw_id += 1
             
-            # 建立符合 CSV 結構的字典 (包含空欄位)
             row_data = {
                 '總期數': last_total_id,
                 '年份': item['year'],
@@ -284,29 +267,24 @@ def update_data_from_web():
                 '球號 3': item['nums'][2],
                 '球號 4': item['nums'][3],
                 '球號 5': item['nums'][4],
-                # 以下是 CSV 有但網頁沒有的欄位，填入空值或預設值
-                '出牌次數': '', 
-                '數字': '', 
-                '次數高至低': '' 
+                '出牌次數': '', '數字': '', '次數高至低': '' # 補齊空欄位
             }
             rows_to_add.append(row_data)
             added_count += 1
             
         if rows_to_add:
             df_new = pd.DataFrame(rows_to_add)
-            # 使用 pd.concat 合併
             current_csv = pd.concat([current_csv, df_new], ignore_index=True)
-            
-            # 存檔
             current_csv.to_csv(CSV_FILE, index=False, encoding='utf-8')
+            
             st.cache_data.clear()
             
-            return f"🎉 成功更新 {added_count} 筆資料！\n最新日期：{new_rows[-1]['year']}/{new_rows[-1]['date_str']}"
-        else:
-            return "✅ 資料已是最新"
+            # 回傳成功訊息 (包含最新抓到的日期)
+            latest_date = new_rows[-1]['dt'].strftime('%Y/%m/%d')
+            return f"🎉 成功更新 {added_count} 筆！(最新：{latest_date})"
         
     except Exception as e:
-        return f"❌ 更新過程發生錯誤: {str(e)}"
+        return f"❌ 更新程式錯誤: {str(e)}"
 
 # --- 載入資料 ---
 df, num_cols = load_and_process_data()
@@ -725,6 +703,7 @@ with tab5:
 
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>COPYRIGHT © 2025 539 PRO ANALYTICS</div>", unsafe_allow_html=True)
+
 
 
 
