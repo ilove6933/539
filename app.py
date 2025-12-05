@@ -131,86 +131,90 @@ def load_and_process_data():
         st.error(f"讀取資料錯誤: {e}")
         return pd.DataFrame(), []
 
-# --- 爬蟲更新函數 (核心新增功能) ---
+# --- 爬蟲更新函數 (修正版) ---
 def update_data_from_web():
     url = "https://www.pilio.idv.tw/lto539/list539APP.asp"
     try:
-        # 1. 抓取網頁表格
-        html = requests.get(url).content
-        # 強制使用 utf-8 或 big5 解碼 (視該網站而定，通常舊網站是 big5，但 pd.read_html 很聰明)
-        try:
-            dfs = pd.read_html(html, encoding='utf-8')
-        except:
-            dfs = pd.read_html(html, encoding='big5')
-            
+        # 1. 抓取網頁
+        # 增加 headers 偽裝成瀏覽器，避免被擋
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers)
+        response.encoding = 'big5' # 該網站通常是 big5 編碼
+        
+        # 2. 解析所有表格
+        dfs = pd.read_html(response.text)
+        
         if not dfs:
-            return "❌ 抓不到網頁資料"
+            return "❌ 抓不到任何表格，請檢查網路或是網站改版"
             
-        web_df = dfs[0] # 抓第一個表格
+        # 3. 自動尋找「正確的表格」
+        # 我們需要的表格應該至少有 8 個欄位 (年份, 日期, 期數, 5顆球)
+        target_df = None
+        for df in dfs:
+            if df.shape[1] >= 8: # 如果欄位數大於等於 8
+                target_df = df
+                break
         
-        # 2. 清洗網頁資料 (對應網站欄位)
-        # 網站欄位通常是: 年份, 日期, 期數, 球號1, 球號2, 球號3, 球號4, 球號5
-        # 我們只取需要的欄位並重新命名以符合我們的 CSV 結構
-        # 假設網站欄位順序固定，直接用 iloc 取值比較保險
-        # 網站資料格式：年份, 日期, 期數, 1, 2, 3, 4, 5
-        
-        # 簡易欄位對應
-        web_df = web_df.iloc[:, :8] # 只取前8欄
+        if target_df is None:
+            return f"❌ 找不到符合格式的開獎表格 (找到 {len(dfs)} 個表格，但欄位數都不對)"
+            
+        # 4. 清洗資料
+        web_df = target_df.iloc[:, :8] # 只取前 8 欄
         web_df.columns = ['年份', '日期', '期數', '球號 1', '球號 2', '球號 3', '球號 4', '球號 5']
         
-        # 處理日期格式 (網站可能是 2024/01/01 或 1月1日)
-        # 假設網站是 "1月1日"，需要補上年份變成完整日期字串以便比對，或者直接比對期數
-        # 最安全的方法是比對「期數」與「年份」
+        # 移除可能包含中文標題的列 (如果第一列是標題)
+        web_df = web_df[pd.to_numeric(web_df['年份'], errors='coerce').notnull()]
         
-        # 3. 讀取現有 CSV 以便比對
+        # 5. 讀取現有 CSV
         try:
             current_csv = pd.read_csv(CSV_FILE)
             # 確保欄位名稱乾淨
             current_csv.columns = [c.strip() for c in current_csv.columns]
             
-            # 取得 CSV 最後一筆的年份與期數
-            last_row = current_csv.iloc[-1]
-            last_year = int(last_row['年份'])
-            last_draw_num = int(last_row['期數'])
-            # 取得最後的總期數
-            if '總期數' in current_csv.columns and not pd.isna(last_row['總期數']):
-                last_total_id = int(last_row['總期數'])
+            # 取得 CSV 最後一筆記錄
+            if not current_csv.empty:
+                last_row = current_csv.iloc[-1]
+                last_year = int(last_row['年份'])
+                last_draw_num = int(last_row['期數'])
+                # 取得最後總期數
+                if '總期數' in current_csv.columns:
+                    last_total_id = int(last_row['總期數'])
+                else:
+                    last_total_id = len(current_csv)
             else:
-                last_total_id = len(current_csv)
+                last_year = 0
+                last_draw_num = 0
+                last_total_id = 0
 
-        except:
-            return "❌ 讀取現有 CSV 失敗"
+        except Exception as e:
+            return f"❌ 讀取現有 CSV 失敗: {e}"
 
-        # 4. 篩選新資料
-        # 邏輯：年份 > last_year OR (年份 == last_year AND 期數 > last_draw_num)
+        # 6. 篩選新資料
         new_rows = []
         for index, row in web_df.iterrows():
             try:
                 w_year = int(row['年份'])
                 w_draw = int(row['期數'])
                 
+                # 邏輯：年份比較大，或者年份相同但期數比較大
                 if (w_year > last_year) or (w_year == last_year and w_draw > last_draw_num):
-                    # 這是新資料！
                     new_rows.append(row)
             except:
-                continue # 跳過標題列或無效列
+                continue 
         
         if not new_rows:
             return "✅ 資料已是最新，無需更新"
         
-        # 5. 處理新資料並合併
-        # 反轉順序，因為網頁通常最新的在上面，我們要依照時間順序加入
+        # 7. 寫入資料
+        # 反轉順序 (因為網頁通常是新的在上面，我們要舊->新寫入)
         new_rows.reverse()
         
         added_count = 0
         for row in new_rows:
-            last_total_id += 1 # 總期數 +1
+            last_total_id += 1
             
-            # 建立新的一行 (依照 CSV 的欄位順序)
-            # 這裡需要依照您 CSV 的實際欄位順序手動構建
-            # 假設 CSV 順序: ,總期數,年份,日期,期數,球號 1,球號 2,球號 3,球號 4,球號 5...
-            
-            # 為了避免格式錯誤，我們創建一個 DataFrame 並用 append
             new_data = {
                 '總期數': last_total_id,
                 '年份': row['年份'],
@@ -222,19 +226,13 @@ def update_data_from_web():
                 '球號 4': row['球號 4'],
                 '球號 5': row['球號 5']
             }
-            # 處理其他可能存在的空白欄位 (依照您的 CSV 格式可能會有 trailing commas)
             
-            # 將新資料轉為 DataFrame
             df_new_row = pd.DataFrame([new_data])
-            
-            # 合併
             current_csv = pd.concat([current_csv, df_new_row], ignore_index=True)
             added_count += 1
             
-        # 6. 存檔
+        # 存檔
         current_csv.to_csv(CSV_FILE, index=False, encoding='utf-8')
-        
-        # 清除 Streamlit 快取，強迫重整
         st.cache_data.clear()
         
         return f"🎉 成功更新 {added_count} 筆資料！"
@@ -659,3 +657,4 @@ with tab5:
 
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>COPYRIGHT © 2025 539 PRO ANALYTICS</div>", unsafe_allow_html=True)
+
