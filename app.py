@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import altair as alt
 import time
+import requests # 新增這行
 
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(
@@ -12,7 +13,7 @@ st.set_page_config(
     page_icon="🍊"
 )
 
-# --- 2. CSS 極致美化 (現代黑白 + 愛馬仕橘) ---
+# --- 2. CSS 極致美化 ---
 hermes_orange = "#F37021"
 black = "#1A1A1A"
 text_color = "#333333"
@@ -24,7 +25,6 @@ st.markdown(f"""
         font-family: "Helvetica Neue", Helvetica, "PingFang TC", "Microsoft JhengHei", Arial, sans-serif !important;
         color: {text_color};
     }}
-
     /* 標題設計 */
     h1 {{
         color: {black};
@@ -36,126 +36,61 @@ st.markdown(f"""
         margin-bottom: 30px;
         font-size: 2.5rem !important;
     }}
+    h2 {{ border-left: 5px solid {hermes_orange}; padding-left: 15px; margin-top: 30px; }}
     
-    h2 {{
-        border-left: 5px solid {hermes_orange};
-        padding-left: 15px;
-        margin-top: 30px;
-    }}
-
     /* 側邊欄優化 */
-    section[data-testid="stSidebar"] {{
-        background-color: #F8F9FA;
-        border-right: 1px solid #E9ECEF;
-    }}
-    
-    /* 側邊欄小球 */
+    section[data-testid="stSidebar"] {{ background-color: #F8F9FA; border-right: 1px solid #E9ECEF; }}
     .sidebar-ball {{
-        display: inline-block;
-        width: 32px;
-        height: 32px;
-        line-height: 32px;
-        border-radius: 50%;
-        background-color: {hermes_orange};
-        color: white;
-        text-align: center;
-        font-weight: bold;
-        font-size: 14px;
-        margin: 3px;
+        display: inline-block; width: 32px; height: 32px; line-height: 32px;
+        border-radius: 50%; background-color: {hermes_orange}; color: white;
+        text-align: center; font-weight: bold; font-size: 14px; margin: 3px;
         box-shadow: 1px 1px 3px rgba(0,0,0,0.2);
     }}
-    
-    /* 快搜狀態標籤 */
-    .status-badge {{
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: bold;
-        color: white;
-        display: inline-block;
-        margin-left: 5px;
-    }}
+    /* 狀態標籤 */
+    .status-badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; display: inline-block; margin-left: 5px; }}
     .status-hot {{ background-color: #FF4B4B; }}
     .status-cold {{ background-color: #4B9EFF; }}
     .status-normal {{ background-color: #888; }}
-
-    /* 指標卡 */
-    div[data-testid="metric-container"] {{
-        background-color: #FFFFFF;
-        border: 1px solid #E0E0E0;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.03);
-    }}
-
-    /* 預測大球 */
+    
+    /* 大球號 */
     .lotto-ball-lg {{
-        background: {hermes_orange};
-        color: white;
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-        font-weight: 800;
-        box-shadow: 0 3px 8px rgba(243, 112, 33, 0.3);
-        margin: 0 5px;
+        background: {hermes_orange}; color: white; width: 50px; height: 50px;
+        border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        font-size: 20px; font-weight: 800; box-shadow: 0 3px 8px rgba(243, 112, 33, 0.3); margin: 0 5px;
     }}
-    
     .lotto-ball-grey {{
-        background: #6c757d;
-        color: white;
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-        font-weight: 800;
-        margin: 0 5px;
+        background: #6c757d; color: white; width: 50px; height: 50px;
+        border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        font-size: 20px; font-weight: 800; margin: 0 5px;
     }}
-    
     /* 評分大數字 */
-    .score-big {{
-        font-size: 80px;
-        font-weight: 900;
-        color: {hermes_orange};
-        line-height: 1;
-    }}
+    .score-big {{ font-size: 80px; font-weight: 900; color: {hermes_orange}; line-height: 1; }}
     
     /* 按鈕 */
-    .stButton > button {{
-        background-color: {black};
-        color: #FFFFFF;
-        border-radius: 6px;
-        border: none;
-        font-weight: 600;
-    }}
-    .stButton > button:hover {{
-        background-color: {hermes_orange};
-    }}
+    .stButton > button {{ background-color: {black}; color: #FFFFFF; border-radius: 6px; border: none; font-weight: 600; }}
+    .stButton > button:hover {{ background-color: {hermes_orange}; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 標題區 ---
 st.markdown("<h1>539 頂級數據分析室</h1>", unsafe_allow_html=True)
 
 # --- 3. 資料處理核心 ---
+CSV_FILE = '539_data.csv'
+
 @st.cache_data
 def load_and_process_data():
     try:
-        df = pd.read_csv('539_data.csv', encoding='utf-8')
+        df = pd.read_csv(CSV_FILE, encoding='utf-8')
         
+        # 欄位對應清洗
         cols_map = {
             '年份': 'Year', '日期': 'Date', '期數': 'Draw_Num',
             '球號 1': 'N1', '球號 1': 'N1',
             '球號 2': 'N2', '球號 2': 'N2',
             '球號 3': 'N3', '球號 3': 'N3',
             '球號 4': 'N4', '球號 4': 'N4',
-            '球號 5': 'N5', '球號 5': 'N5'
+            '球號 5': 'N5', '球號 5': 'N5',
+            '總期數': 'Total_ID' # 確保讀取總期數
         }
         
         clean_cols = {}
@@ -165,13 +100,22 @@ def load_and_process_data():
                 clean_cols[c] = cols_map[clean_c]
         
         df = df.rename(columns=clean_cols)
+        
+        # 確保必要欄位存在
         num_cols = ['N1', 'N2', 'N3', 'N4', 'N5']
         
+        # 強制轉型
         for col in num_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # 如果沒有 Total_ID，嘗試重建 (舊資料可能沒有)
+        if 'Total_ID' not in df.columns:
+            df['Total_ID'] = range(1, len(df) + 1)
+
         df = df.dropna(subset=num_cols)
         df = df.reset_index(drop=True)
         
+        # 特徵工程
         df['Sum'] = df[num_cols].sum(axis=1)
         df['Big_Count'] = df[num_cols].apply(lambda x: sum(n >= 20 for n in x), axis=1)
         df['Odd_Count'] = df[num_cols].apply(lambda x: sum(n % 2 != 0 for n in x), axis=1)
@@ -187,16 +131,144 @@ def load_and_process_data():
         st.error(f"讀取資料錯誤: {e}")
         return pd.DataFrame(), []
 
+# --- 爬蟲更新函數 (核心新增功能) ---
+def update_data_from_web():
+    url = "https://www.pilio.idv.tw/lto539/list539APP.asp"
+    try:
+        # 1. 抓取網頁表格
+        html = requests.get(url).content
+        # 強制使用 utf-8 或 big5 解碼 (視該網站而定，通常舊網站是 big5，但 pd.read_html 很聰明)
+        try:
+            dfs = pd.read_html(html, encoding='utf-8')
+        except:
+            dfs = pd.read_html(html, encoding='big5')
+            
+        if not dfs:
+            return "❌ 抓不到網頁資料"
+            
+        web_df = dfs[0] # 抓第一個表格
+        
+        # 2. 清洗網頁資料 (對應網站欄位)
+        # 網站欄位通常是: 年份, 日期, 期數, 球號1, 球號2, 球號3, 球號4, 球號5
+        # 我們只取需要的欄位並重新命名以符合我們的 CSV 結構
+        # 假設網站欄位順序固定，直接用 iloc 取值比較保險
+        # 網站資料格式：年份, 日期, 期數, 1, 2, 3, 4, 5
+        
+        # 簡易欄位對應
+        web_df = web_df.iloc[:, :8] # 只取前8欄
+        web_df.columns = ['年份', '日期', '期數', '球號 1', '球號 2', '球號 3', '球號 4', '球號 5']
+        
+        # 處理日期格式 (網站可能是 2024/01/01 或 1月1日)
+        # 假設網站是 "1月1日"，需要補上年份變成完整日期字串以便比對，或者直接比對期數
+        # 最安全的方法是比對「期數」與「年份」
+        
+        # 3. 讀取現有 CSV 以便比對
+        try:
+            current_csv = pd.read_csv(CSV_FILE)
+            # 確保欄位名稱乾淨
+            current_csv.columns = [c.strip() for c in current_csv.columns]
+            
+            # 取得 CSV 最後一筆的年份與期數
+            last_row = current_csv.iloc[-1]
+            last_year = int(last_row['年份'])
+            last_draw_num = int(last_row['期數'])
+            # 取得最後的總期數
+            if '總期數' in current_csv.columns and not pd.isna(last_row['總期數']):
+                last_total_id = int(last_row['總期數'])
+            else:
+                last_total_id = len(current_csv)
+
+        except:
+            return "❌ 讀取現有 CSV 失敗"
+
+        # 4. 篩選新資料
+        # 邏輯：年份 > last_year OR (年份 == last_year AND 期數 > last_draw_num)
+        new_rows = []
+        for index, row in web_df.iterrows():
+            try:
+                w_year = int(row['年份'])
+                w_draw = int(row['期數'])
+                
+                if (w_year > last_year) or (w_year == last_year and w_draw > last_draw_num):
+                    # 這是新資料！
+                    new_rows.append(row)
+            except:
+                continue # 跳過標題列或無效列
+        
+        if not new_rows:
+            return "✅ 資料已是最新，無需更新"
+        
+        # 5. 處理新資料並合併
+        # 反轉順序，因為網頁通常最新的在上面，我們要依照時間順序加入
+        new_rows.reverse()
+        
+        added_count = 0
+        for row in new_rows:
+            last_total_id += 1 # 總期數 +1
+            
+            # 建立新的一行 (依照 CSV 的欄位順序)
+            # 這裡需要依照您 CSV 的實際欄位順序手動構建
+            # 假設 CSV 順序: ,總期數,年份,日期,期數,球號 1,球號 2,球號 3,球號 4,球號 5...
+            
+            # 為了避免格式錯誤，我們創建一個 DataFrame 並用 append
+            new_data = {
+                '總期數': last_total_id,
+                '年份': row['年份'],
+                '日期': row['日期'],
+                '期數': row['期數'],
+                '球號 1': row['球號 1'],
+                '球號 2': row['球號 2'],
+                '球號 3': row['球號 3'],
+                '球號 4': row['球號 4'],
+                '球號 5': row['球號 5']
+            }
+            # 處理其他可能存在的空白欄位 (依照您的 CSV 格式可能會有 trailing commas)
+            
+            # 將新資料轉為 DataFrame
+            df_new_row = pd.DataFrame([new_data])
+            
+            # 合併
+            current_csv = pd.concat([current_csv, df_new_row], ignore_index=True)
+            added_count += 1
+            
+        # 6. 存檔
+        current_csv.to_csv(CSV_FILE, index=False, encoding='utf-8')
+        
+        # 清除 Streamlit 快取，強迫重整
+        st.cache_data.clear()
+        
+        return f"🎉 成功更新 {added_count} 筆資料！"
+        
+    except Exception as e:
+        return f"❌ 更新失敗: {str(e)}"
+
+# --- 載入資料 ---
 df, num_cols = load_and_process_data()
 
 if df.empty:
     st.warning("請確認 '539_data.csv' 檔案是否存在。")
     st.stop()
 
-# --- 側邊欄：功能強化版 ---
+# --- 側邊欄 ---
 st.sidebar.markdown(f"<h3 style='text-align:center; color:#555;'>戰情控制台</h3>", unsafe_allow_html=True)
 
-# 1. 最新開獎 (美化卡片)
+# *** 新增：資料更新按鈕 ***
+if st.sidebar.button("🔄 線上更新最新開獎"):
+    with st.sidebar.status("正在連線至開獎網站...", expanded=True) as status:
+        msg = update_data_from_web()
+        if "成功" in msg:
+            status.update(label="更新完成", state="complete", expanded=False)
+            st.sidebar.success(msg)
+            time.sleep(1)
+            st.rerun() # 重新整理頁面
+        elif "已是最新" in msg:
+            status.update(label="無需更新", state="complete", expanded=False)
+            st.sidebar.info(msg)
+        else:
+            status.update(label="錯誤", state="error")
+            st.sidebar.error(msg)
+
+# 1. 最新開獎
 total_draws = len(df)
 last_draw = df.iloc[-1]
 last_nums = last_draw[num_cols].astype(int).tolist()
@@ -206,13 +278,14 @@ st.sidebar.markdown(f"""
 <div style="background-color: white; border-radius: 8px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); text-align: center; margin-bottom: 20px; border: 1px solid #eee;">
     <div style="font-size: 11px; color: #999; margin-bottom: 5px;">LATEST DRAW ({last_draw['Date']})</div>
     <div style="display: flex; justify-content: center; flex-wrap: wrap;">{last_nums_html}</div>
+    <div style="font-size: 10px; color: #ccc; margin-top: 5px;">總期數: {last_draw.get('Total_ID', total_draws)}</div>
 </div>
 """, unsafe_allow_html=True)
 
-# 2. 資料過濾器 (已修正邏輯)
+# 2. 資料過濾器
 with st.sidebar.expander("📅 資料時光機 (篩選年份)", expanded=False):
     all_years = sorted(df['Year'].unique().tolist(), reverse=True)
-    selected_years = st.multiselect("選擇年份 (留空則分析所有歷史資料)：", all_years)
+    selected_years = st.multiselect("選擇年份 (留空則分析所有資料)：", all_years)
     
     if selected_years:
         filtered_df = df[df['Year'].isin(selected_years)]
@@ -221,7 +294,6 @@ with st.sidebar.expander("📅 資料時光機 (篩選年份)", expanded=False):
         filtered_df = df # 預設使用全部資料
         st.caption(f"目前分析資料庫內所有 {len(df)} 期紀錄")
 
-# 全域變數改用 filtered_df
 current_df = filtered_df
 current_total_draws = len(current_df)
 
@@ -233,8 +305,6 @@ quick_search_num = st.sidebar.number_input("輸入號碼查看狀態", 1, 39, 1,
 if current_total_draws > 0:
     is_hit = current_df[num_cols].isin([quick_search_num]).any(axis=1)
     if is_hit.sum() > 0:
-        # 計算遺漏：需以資料最後一筆為基準
-        # 取得最後一次出現的索引（相對於 current_df）
         last_hit_pos = np.where(is_hit)[0][-1] 
         draws_since = (len(current_df) - 1) - last_hit_pos
         recent_freq = current_df.tail(30)[num_cols].isin([quick_search_num]).any(axis=1).sum()
@@ -268,7 +338,6 @@ if watchlist and current_total_draws > 0:
 # 5. 分析設定
 st.sidebar.markdown("---")
 analysis_range = st.sidebar.slider("趨勢圖表顯示期數", 10, 100, 50)
-
 
 # --- 4. 內容分頁 ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -376,7 +445,6 @@ with tab2:
         w_miss = st.slider("「冷門補漲」權重 (遺漏)", 0.0, 2.0, 0.3)
         
         scores = {}
-        # 拖牌 (使用完整歷史 df 計算準確度)
         for n in last_nums:
             idx = df[df[num_cols].isin([n]).any(axis=1)].index
             next_idx = idx + 1
@@ -387,15 +455,13 @@ with tab2:
                 for num, count in val_counts.items():
                     scores[num] = scores.get(num, 0) + (count * w_friend)
 
-        # 遺漏 (使用目前篩選範圍 current_df)
         for num in range(1, 40):
             is_hit = current_df[num_cols].isin([num]).any(axis=1)
-            # 找到最後一次出現的位置
             if is_hit.sum() > 0:
                 last_hit_pos = np.where(is_hit)[0][-1]
                 skip = (len(current_df) - 1) - last_hit_pos
             else:
-                skip = len(current_df) # 從未出現
+                skip = len(current_df)
                 
             if 5 <= skip <= 12: 
                 scores[num] = scores.get(num, 0) + (50 * w_miss)
@@ -575,7 +641,6 @@ with tab5:
         hot_data = []
         for n in range(1, 40):
             is_hit = current_df[num_cols].isin([n]).any(axis=1)
-            # 修正：遺漏值計算需基於 current_df
             if is_hit.sum() > 0:
                 last_hit_pos = np.where(is_hit)[0][-1]
                 skip = (len(current_df) - 1) - last_hit_pos
