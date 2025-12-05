@@ -349,11 +349,19 @@ def update_data_from_web():
         # 合併
         final_df = pd.concat([current_csv, df_new], ignore_index=True)
         
+        # --- 新增防呆保護 ---
+        if len(final_df) < len(current_csv):
+            return f"⚠️ 更新失敗：新資料總數 ({len(final_df)}) 少於原資料 ({len(current_csv)})，系統拒絕存檔以保護歷史數據。"
+            
+        if len(final_df) < 1000:
+             return f"⚠️ 警告：資料庫似乎遺失，目前僅有 {len(final_df)} 筆資料。請重新匯入歷史大檔。"
+        # --------------------
+
         # 存檔
         final_df.to_csv(CSV_FILE, index=False, encoding='utf-8')
         st.cache_data.clear()
         
-        return f"🎉 成功更新 {len(rows_to_add)} 筆資料！(最新: {new_rows[-1]['年份']}/{new_rows[-1]['日期']})"
+        return f"🎉 成功更新 {len(rows_to_add)} 筆資料！(最新: {new_rows[-1]['年份']}/{new_rows[-1]['date_str']})"
 
     except Exception as e:
         return f"❌ 更新錯誤: {str(e)}"
@@ -770,3 +778,4 @@ with tab5:
 
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #CCC; font-size: 12px;'>COPYRIGHT © 2025 539 PRO ANALYTICS</div>", unsafe_allow_html=True)
+
